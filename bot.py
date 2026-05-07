@@ -1,19 +1,14 @@
 import os
 import json
-import time
 import asyncio
-import threading
 import traceback
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
-
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
 
-import nest_asyncio
-nest_asyncio.apply()
-
-from telegram import Bot, InputFile
+from telegram import InputFile
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -25,7 +20,9 @@ from telegram.ext import (
 
 TOKEN = os.getenv("TOKEN")
 
-GROUP_ID = int(os.getenv("GROUP_ID"))
+GROUP_ID = int(
+    os.getenv("GROUP_ID")
+)
 
 ADMIN_IDS = list(
     map(
@@ -38,35 +35,29 @@ DATA_FILE = "test_data.json"
 
 # ================== DATA ==================
 
-data_lock = threading.Lock()
-
-
 def load_data():
 
-    with data_lock:
+    try:
 
-        try:
+        with open(DATA_FILE, "r") as f:
 
-            with open(DATA_FILE, "r") as f:
-                return json.load(f)
+            return json.load(f)
 
-        except:
+    except:
 
-            return {
-                "users": {},
-                "polls": {}
-            }
+        return {
+            "users": {},
+            "polls": {}
+        }
 
 
 def save_data(data):
 
-    with data_lock:
+    with open(DATA_FILE, "w") as f:
 
-        with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=4)
 
-            json.dump(data, f, indent=4)
-
-            f.flush()
+        f.flush()
 
 
 # ================== LOAD SCHEDULE ==================
@@ -122,7 +113,7 @@ MATCH_SCHEDULE = load_schedule()
 
 # ================== CREATE POLL ==================
 
-async def create_poll_auto(bot, match):
+async def create_poll_auto(context, match):
 
     try:
 
@@ -135,11 +126,6 @@ async def create_poll_auto(bot, match):
 
         current_time = datetime.now(
             ZoneInfo("Asia/Kolkata")
-        )
-
-        print(
-            f"🧪 CREATE CHECK | NOW: {current_time} | "
-            f"MATCH: {match['create_time']}"
         )
 
         if current_time < match["create_time"]:
@@ -171,13 +157,12 @@ async def create_poll_auto(bot, match):
 
         print(f"🟢 Creating Match {match_no}")
 
-        message = await bot.send_poll(
+        message = await context.bot.send_poll(
 
             chat_id=GROUP_ID,
 
             question=(
-                f"Match {match_no} "
-                f"({match['type'].upper()})\n"
+                f"{match_no}\n"
                 f"{match['team1']} vs {match['team2']}"
             ),
 
@@ -201,31 +186,22 @@ async def create_poll_auto(bot, match):
 
         save_data(data)
 
-        print(f"✅ POLL SAVED {match_no}")
+        await context.bot.pin_chat_message(
+            GROUP_ID,
+            message.message_id
+        )
 
-        try:
+        print(f"✅ MATCH {match_no} CREATED")
 
-            await bot.pin_chat_message(
-                GROUP_ID,
-                message.message_id
-            )
+    except:
 
-            print(f"📌 PINNED MATCH {match_no}")
-
-        except Exception as e:
-
-            print("❌ PIN ERROR")
-            traceback.print_exc()
-
-    except Exception as e:
-
-        print("❌ CREATE ERROR")
+        print("❌ CREATE POLL ERROR")
         traceback.print_exc()
 
 
 # ================== CLOSE POLL ==================
 
-async def close_poll_auto(bot, match):
+async def close_poll_auto(context, match):
 
     try:
 
@@ -248,7 +224,7 @@ async def close_poll_auto(bot, match):
         if current_time < match["close_time"]:
             return
 
-        await bot.stop_poll(
+        await context.bot.stop_poll(
             GROUP_ID,
             poll["message_id"]
         )
@@ -257,11 +233,29 @@ async def close_poll_auto(bot, match):
 
         save_data(data)
 
-        print(f"⛔ CLOSED MATCH {match_no}")
+        print(f"⛔ MATCH {match_no} CLOSED")
 
-    except Exception as e:
+    except:
 
-        print("❌ CLOSE ERROR")
+        print("❌ CLOSE POLL ERROR")
+        traceback.print_exc()
+
+
+# ================== SCHEDULER ==================
+
+async def scheduler(context):
+
+    try:
+
+        for match in MATCH_SCHEDULE:
+
+            await create_poll_auto(context, match)
+
+            await close_poll_auto(context, match)
+
+    except:
+
+        print("❌ SCHEDULER ERROR")
         traceback.print_exc()
 
 
@@ -277,45 +271,41 @@ async def handle_vote(update, context):
 
         user = answer.user
 
-        print(f"🗳 Vote from {user.first_name}")
+        data = load_data()
 
-        for _ in range(5):
+        for match_no, poll in data["polls"].items():
 
-            data = load_data()
+            if poll["poll_id"] == poll_id:
 
-            for match_no, poll in data["polls"].items():
+                if str(user.id) not in data["users"]:
 
-                if poll["poll_id"] == poll_id:
+                    data["users"][str(user.id)] = {
 
-                    if str(user.id) not in data["users"]:
+                        "name": user.first_name,
+                        "points": 0
 
-                        data["users"][str(user.id)] = {
+                    }
 
-                            "name": user.first_name,
-                            "points": 0
+                if answer.option_ids:
 
-                        }
+                    poll["votes"][str(user.id)] = (
+                        answer.option_ids[0]
+                    )
 
-                    if answer.option_ids:
+                else:
 
-                        poll["votes"][str(user.id)] = (
-                            answer.option_ids[0]
-                        )
+                    poll["votes"].pop(
+                        str(user.id),
+                        None
+                    )
 
-                    else:
+                save_data(data)
 
-                        poll["votes"].pop(
-                            str(user.id),
-                            None
-                        )
+                print(f"🗳 Vote from {user.first_name}")
 
-                    save_data(data)
+                return
 
-                    return
-
-            await asyncio.sleep(1)
-
-    except Exception as e:
+    except:
 
         print("❌ VOTE ERROR")
         traceback.print_exc()
@@ -392,9 +382,7 @@ async def update_result(update, context):
 
             else:
 
-                penalty = pts // 2
-
-                user["points"] -= penalty
+                user["points"] -= pts // 2
 
         poll["updated"] = True
 
@@ -407,10 +395,8 @@ async def update_result(update, context):
                 poll["message_id"]
             )
 
-        except Exception as e:
-
-            print("❌ UNPIN ERROR")
-            traceback.print_exc()
+        except:
+            pass
 
         await send_leaderboard(context)
 
@@ -418,7 +404,7 @@ async def update_result(update, context):
             f"✅ Match {match_no} updated"
         )
 
-    except Exception as e:
+    except:
 
         print("❌ UPDATE ERROR")
         traceback.print_exc()
@@ -442,9 +428,7 @@ async def send_leaderboard(context):
 
         )
 
-        text = (
-            "🏆 <b>Leaderboard</b>\n\n"
-        )
+        text = "🏆 <b>Leaderboard</b>\n\n"
 
         for i, (uid, user) in enumerate(users, 1):
 
@@ -465,11 +449,9 @@ async def send_leaderboard(context):
             else:
                 prefix = f"{i}."
 
-            pts_text = str(user["points"])
-
             text += (
                 f"{prefix} {tag} — "
-                f"<b>{pts_text}</b> pts\n"
+                f"<b>{user['points']}</b> pts\n"
             )
 
         await context.bot.send_message(
@@ -482,7 +464,7 @@ async def send_leaderboard(context):
 
         )
 
-    except Exception as e:
+    except:
 
         print("❌ LEADERBOARD ERROR")
         traceback.print_exc()
@@ -504,7 +486,7 @@ async def ping(update, context):
 
 # ================== KEEP ALIVE ==================
 
-async def keep_alive(context: ContextTypes.DEFAULT_TYPE):
+async def keep_alive(context):
 
     print("✅ BOT STILL RUNNING")
 
@@ -530,7 +512,7 @@ async def backup(update, context):
 
             )
 
-    except Exception as e:
+    except:
 
         print("❌ BACKUP ERROR")
         traceback.print_exc()
@@ -549,38 +531,6 @@ async def error_handler(update, context):
     )
 
     print("\n❌ END ERROR ❌\n")
-
-
-# ================== SCHEDULER ==================
-
-def scheduler_thread(bot):
-
-    loop = asyncio.new_event_loop()
-
-    asyncio.set_event_loop(loop)
-
-    async def run_all():
-
-        for match in MATCH_SCHEDULE:
-
-            await create_poll_auto(bot, match)
-
-            await close_poll_auto(bot, match)
-
-    while True:
-
-        try:
-
-            print("🔁 Scheduler running")
-
-            loop.run_until_complete(run_all())
-
-        except Exception as e:
-
-            print("❌ Scheduler Error")
-            traceback.print_exc()
-
-        time.sleep(10)
 
 
 # ================== WEB SERVER ==================
@@ -613,7 +563,7 @@ def run_web():
 
 def main():
 
-    print("🔥 Bot starting")
+    print("🔥 BOT STARTING")
 
     app = Application.builder().token(TOKEN).build()
 
@@ -640,32 +590,26 @@ def main():
     app.add_error_handler(error_handler)
 
     app.job_queue.run_repeating(
+        scheduler,
+        interval=10,
+        first=5
+    )
+
+    app.job_queue.run_repeating(
         keep_alive,
         interval=300,
         first=10
     )
 
-    bot = Bot(TOKEN)
-
-    threading.Thread(
+    Thread(
         target=run_web,
         daemon=True
     ).start()
 
-    threading.Thread(
-        target=scheduler_thread,
-        args=(bot,),
-        daemon=True
-    ).start()
-
-    print("🚀 STARTING POLLING")
+    print("🚀 BOT STARTED")
 
     app.run_polling(
-
-        drop_pending_updates=True,
-        close_loop=False,
-        allowed_updates=None
-
+        drop_pending_updates=True
     )
 
 
