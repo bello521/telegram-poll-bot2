@@ -598,7 +598,15 @@ def main():
 
     asyncio.get_event_loop().set_debug(False)
 
-    app = Application.builder().token(TOKEN).build()
+    app = (
+        Application.builder()
+        .token(TOKEN)
+        .get_updates_read_timeout(30)
+        .get_updates_write_timeout(30)
+        .get_updates_connect_timeout(30)
+        .get_updates_pool_timeout(30)
+        .build()
+    )
 
     app.add_handler(
         CommandHandler("update", update_result)
@@ -641,20 +649,18 @@ def main():
 
     print("🚀 BOT STARTED")
 
+    print("🚀 STARTING POLLING")
+
     app.run_polling(
         drop_pending_updates=True,
         allowed_updates=None,
         close_loop=False,
         stop_signals=None,
         bootstrap_retries=-1,
-        poll_interval=2,
-        timeout=30,
-        read_timeout=30,
-        write_timeout=30,
-        connect_timeout=30,
-        pool_timeout=30
+        poll_interval=2
     )
 
+    print("❌ POLLING STOPPED")
 
 if __name__ == "__main__":
 
