@@ -1,0 +1,671 @@
+import os
+import json
+import time
+import asyncio
+import threading
+import traceback
+
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import nest_asyncio
+nest_asyncio.apply()
+
+from telegram import Bot, InputFile
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    PollAnswerHandler,
+    ContextTypes
+)
+
+# ================== CONFIG ==================
+
+TOKEN = os.getenv("TOKEN")
+
+GROUP_ID = int(os.getenv("GROUP_ID"))
+
+ADMIN_IDS = [
+    123456789
+]
+
+DATA_FILE = "test_data.json"
+
+# ================== DATA ==================
+
+data_lock = threading.Lock()
+
+
+def load_data():
+
+    with data_lock:
+
+        try:
+
+            with open(DATA_FILE, "r") as f:
+                return json.load(f)
+
+        except:
+
+            return {
+                "users": {},
+                "polls": {}
+            }
+
+
+def save_data(data):
+
+    with data_lock:
+
+        with open(DATA_FILE, "w") as f:
+
+            json.dump(data, f, indent=4)
+
+            f.flush()
+
+
+# ================== LOAD SCHEDULE ==================
+
+def load_schedule():
+
+    print("📂 Loading test_schedule.json")
+
+    with open("test_schedule.json", "r") as f:
+
+        raw = json.load(f)
+
+    schedule = []
+
+    for match in raw:
+
+        create_time = datetime.strptime(
+            match["create_time"],
+            "%Y-%m-%d %H:%M"
+        ).replace(
+            tzinfo=ZoneInfo("Asia/Kolkata")
+        )
+
+        close_time = datetime.strptime(
+            match["close_time"],
+            "%Y-%m-%d %H:%M"
+        ).replace(
+            tzinfo=ZoneInfo("Asia/Kolkata")
+        )
+
+        schedule.append({
+
+            "match_no": str(match["match_no"]),
+
+            "team1": match["team1"],
+
+            "team2": match["team2"],
+
+            "type": match["type"],
+
+            "create_time": create_time,
+
+            "close_time": close_time
+
+        })
+
+    print("✅ SCHEDULE LOADED")
+
+    return schedule
+
+
+MATCH_SCHEDULE = load_schedule()
+
+# ================== CREATE POLL ==================
+
+async def create_poll_auto(bot, match):
+
+    try:
+
+        data = load_data()
+
+        match_no = match["match_no"]
+
+        if match_no in data["polls"]:
+            return
+
+        current_time = datetime.now(
+            ZoneInfo("Asia/Kolkata")
+        )
+
+        print(
+            f"🧪 CREATE CHECK | NOW: {current_time} | "
+            f"MATCH: {match['create_time']}"
+        )
+
+        if current_time < match["create_time"]:
+            return
+
+        if match["type"] == "normal":
+
+            high = 100
+            low = 50
+
+        elif match["type"] == "double":
+
+            high = 300
+            low = 150
+
+        else:
+
+            high = 1000
+            low = 500
+
+        options = [
+
+            f"{match['team1']} {high}",
+            f"{match['team2']} {high}",
+            f"{match['team1']} {low}",
+            f"{match['team2']} {low}"
+
+        ]
+
+        print(f"🟢 Creating Match {match_no}")
+
+        message = await bot.send_poll(
+
+            chat_id=GROUP_ID,
+
+            question=(
+                f"Match {match_no} "
+                f"({match['type'].upper()})\n"
+                f"{match['team1']} vs {match['team2']}"
+            ),
+
+            options=options,
+
+            is_anonymous=False
+
+        )
+
+        data["polls"][match_no] = {
+
+            "poll_id": message.poll.id,
+            "message_id": message.message_id,
+            "options": options,
+            "votes": {},
+            "closed": False,
+            "updated": False,
+            "type": match["type"]
+
+        }
+
+        save_data(data)
+
+        print(f"✅ POLL SAVED {match_no}")
+
+        try:
+
+            await bot.pin_chat_message(
+                GROUP_ID,
+                message.message_id
+            )
+
+            print(f"📌 PINNED MATCH {match_no}")
+
+        except Exception as e:
+
+            print("❌ PIN ERROR")
+            traceback.print_exc()
+
+    except Exception as e:
+
+        print("❌ CREATE ERROR")
+        traceback.print_exc()
+
+
+# ================== CLOSE POLL ==================
+
+async def close_poll_auto(bot, match):
+
+    try:
+
+        data = load_data()
+
+        match_no = match["match_no"]
+
+        if match_no not in data["polls"]:
+            return
+
+        poll = data["polls"][match_no]
+
+        if poll["closed"]:
+            return
+
+        current_time = datetime.now(
+            ZoneInfo("Asia/Kolkata")
+        )
+
+        if current_time < match["close_time"]:
+            return
+
+        await bot.stop_poll(
+            GROUP_ID,
+            poll["message_id"]
+        )
+
+        poll["closed"] = True
+
+        save_data(data)
+
+        print(f"⛔ CLOSED MATCH {match_no}")
+
+    except Exception as e:
+
+        print("❌ CLOSE ERROR")
+        traceback.print_exc()
+
+
+# ================== HANDLE VOTES ==================
+
+async def handle_vote(update, context):
+
+    try:
+
+        answer = update.poll_answer
+
+        poll_id = answer.poll_id
+
+        user = answer.user
+
+        print(f"🗳 Vote from {user.first_name}")
+
+        for _ in range(5):
+
+            data = load_data()
+
+            for match_no, poll in data["polls"].items():
+
+                if poll["poll_id"] == poll_id:
+
+                    if str(user.id) not in data["users"]:
+
+                        data["users"][str(user.id)] = {
+
+                            "name": user.first_name,
+                            "points": 0
+
+                        }
+
+                    if answer.option_ids:
+
+                        poll["votes"][str(user.id)] = (
+                            answer.option_ids[0]
+                        )
+
+                    else:
+
+                        poll["votes"].pop(
+                            str(user.id),
+                            None
+                        )
+
+                    save_data(data)
+
+                    return
+
+            await asyncio.sleep(1)
+
+    except Exception as e:
+
+        print("❌ VOTE ERROR")
+        traceback.print_exc()
+
+
+# ================== UPDATE RESULT ==================
+
+async def update_result(update, context):
+
+    try:
+
+        if update.effective_user.id not in ADMIN_IDS:
+            return
+
+        try:
+
+            match_no = str(context.args[0])
+
+            winner = context.args[1].upper()
+
+        except:
+
+            await update.message.reply_text(
+                "Usage: /update 49 SRH"
+            )
+
+            return
+
+        data = load_data()
+
+        if match_no not in data["polls"]:
+
+            await update.message.reply_text(
+                "Invalid match"
+            )
+
+            return
+
+        poll = data["polls"][match_no]
+
+        if poll["updated"]:
+
+            await update.message.reply_text(
+                "Already updated"
+            )
+
+            return
+
+        options = poll["options"]
+
+        votes = poll["votes"]
+
+        for uid in data["users"]:
+
+            user = data["users"][uid]
+
+            vote = votes.get(uid)
+
+            if vote is None:
+
+                user["points"] -= 25
+
+                continue
+
+            option_text = options[vote]
+
+            team, pts = option_text.split()
+
+            pts = int(pts)
+
+            if team == winner:
+
+                user["points"] += pts
+
+            else:
+
+                penalty = pts // 2
+
+                user["points"] -= penalty
+
+        poll["updated"] = True
+
+        save_data(data)
+
+        try:
+
+            await context.bot.unpin_chat_message(
+                GROUP_ID,
+                poll["message_id"]
+            )
+
+        except Exception as e:
+
+            print("❌ UNPIN ERROR")
+            traceback.print_exc()
+
+        await send_leaderboard(context)
+
+        await update.message.reply_text(
+            f"✅ Match {match_no} updated"
+        )
+
+    except Exception as e:
+
+        print("❌ UPDATE ERROR")
+        traceback.print_exc()
+
+
+# ================== LEADERBOARD ==================
+
+async def send_leaderboard(context):
+
+    try:
+
+        data = load_data()
+
+        users = sorted(
+
+            data["users"].items(),
+
+            key=lambda x: x[1]["points"],
+
+            reverse=True
+
+        )
+
+        text = (
+            "🏆 <b>Leaderboard</b>\n\n"
+        )
+
+        for i, (uid, user) in enumerate(users, 1):
+
+            tag = (
+                f'<a href="tg://user?id={uid}">'
+                f'{user["name"]}</a>'
+            )
+
+            if i == 1:
+                prefix = "🥇"
+
+            elif i == 2:
+                prefix = "🥈"
+
+            elif i == 3:
+                prefix = "🥉"
+
+            else:
+                prefix = f"{i}."
+
+            pts_text = str(user["points"])
+
+            text += (
+                f"{prefix} {tag} — "
+                f"<b>{pts_text}</b> pts\n"
+            )
+
+        await context.bot.send_message(
+
+            GROUP_ID,
+
+            text,
+
+            parse_mode="HTML"
+
+        )
+
+    except Exception as e:
+
+        print("❌ LEADERBOARD ERROR")
+        traceback.print_exc()
+
+
+async def leaderboard(update, context):
+
+    await send_leaderboard(context)
+
+
+# ================== PING ==================
+
+async def ping(update, context):
+
+    await update.message.reply_text(
+        "🏓 Bot alive"
+    )
+
+
+# ================== KEEP ALIVE ==================
+
+async def keep_alive(context: ContextTypes.DEFAULT_TYPE):
+
+    print("✅ BOT STILL RUNNING")
+
+
+# ================== BACKUP ==================
+
+async def backup(update, context):
+
+    try:
+
+        if update.effective_user.id not in ADMIN_IDS:
+            return
+
+        with open(DATA_FILE, "rb") as f:
+
+            await context.bot.send_document(
+
+                chat_id=update.effective_chat.id,
+
+                document=InputFile(f),
+
+                filename="backup.json"
+
+            )
+
+    except Exception as e:
+
+        print("❌ BACKUP ERROR")
+        traceback.print_exc()
+
+
+# ================== ERROR HANDLER ==================
+
+async def error_handler(update, context):
+
+    print("\n❌ TELEGRAM ERROR ❌\n")
+
+    traceback.print_exception(
+        type(context.error),
+        context.error,
+        context.error.__traceback__
+    )
+
+    print("\n❌ END ERROR ❌\n")
+
+
+# ================== SCHEDULER ==================
+
+def scheduler_thread(bot):
+
+    loop = asyncio.new_event_loop()
+
+    asyncio.set_event_loop(loop)
+
+    async def run_all():
+
+        for match in MATCH_SCHEDULE:
+
+            await create_poll_auto(bot, match)
+
+            await close_poll_auto(bot, match)
+
+    while True:
+
+        try:
+
+            print("🔁 Scheduler running")
+
+            loop.run_until_complete(run_all())
+
+        except Exception as e:
+
+            print("❌ Scheduler Error")
+            traceback.print_exc()
+
+        time.sleep(10)
+
+
+# ================== WEB SERVER ==================
+
+def run_web():
+
+    class Handler(BaseHTTPRequestHandler):
+
+        def do_GET(self):
+
+            self.send_response(200)
+
+            self.end_headers()
+
+            self.wfile.write(b"Bot running")
+
+    port = int(
+        os.environ.get("PORT", 10000)
+    )
+
+    print(f"🌐 WEB RUNNING ON {port}")
+
+    HTTPServer(
+        ("0.0.0.0", port),
+        Handler
+    ).serve_forever()
+
+
+# ================== MAIN ==================
+
+def main():
+
+    print("🔥 Bot starting")
+
+    app = Application.builder().token(TOKEN).build()
+
+    app.add_handler(
+        CommandHandler("update", update_result)
+    )
+
+    app.add_handler(
+        CommandHandler("leaderboard", leaderboard)
+    )
+
+    app.add_handler(
+        CommandHandler("ping", ping)
+    )
+
+    app.add_handler(
+        CommandHandler("backup", backup)
+    )
+
+    app.add_handler(
+        PollAnswerHandler(handle_vote)
+    )
+
+    app.add_error_handler(error_handler)
+
+    app.job_queue.run_repeating(
+        keep_alive,
+        interval=300,
+        first=10
+    )
+
+    bot = Bot(TOKEN)
+
+    threading.Thread(
+        target=run_web,
+        daemon=True
+    ).start()
+
+    threading.Thread(
+        target=scheduler_thread,
+        args=(bot,),
+        daemon=True
+    ).start()
+
+    print("🚀 STARTING POLLING")
+
+    app.run_polling(
+
+        drop_pending_updates=True,
+        close_loop=False,
+        allowed_updates=None
+
+    )
+
+
+if __name__ == "__main__":
+
+    main()
