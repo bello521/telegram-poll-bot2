@@ -27,9 +27,12 @@ TOKEN = os.getenv("TOKEN")
 
 GROUP_ID = int(os.getenv("GROUP_ID"))
 
-ADMIN_IDS = [
-    123456789
-]
+ADMIN_IDS = list(
+    map(
+        int,
+        os.getenv("ADMIN_IDS", "").split(",")
+    )
+)
 
 DATA_FILE = "test_data.json"
 

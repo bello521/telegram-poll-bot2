@@ -1,2 +1,3 @@
-python-telegram-bot==20.7
-schedule
+python-telegram-bot[job-queue]==20.7
+nest_asyncio
+tzdata
