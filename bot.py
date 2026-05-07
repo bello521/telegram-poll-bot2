@@ -65,7 +65,7 @@ def load_schedule():
 
     print("📂 Loading schedule.json")
 
-    with open("schedule.json", "r") as f:
+    with open("test_schedule.json", "r") as f:
 
         raw = json.load(f)
 
