@@ -1,6 +1,7 @@
 import os
 import json
 import traceback
+import asyncio
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -64,7 +65,7 @@ def load_schedule():
 
     print("📂 Loading schedule.json")
 
-    with open("test_schedule.json", "r") as f:
+    with open("schedule.json", "r") as f:
 
         raw = json.load(f)
 
@@ -468,12 +469,12 @@ async def send_leaderboard(context):
                 prefix = f"{i}."
 
             text += (
-                f"{prefix} {tag}\n"
-                f"└ <b>{user['points']}</b> pts\n\n"
+                f"{prefix} {tag} — "
+                f"<b>{user['points']}</b> pts\n"
             )
 
         text += (
-            f"📌 Updated after Match "
+            f"\n📌 Updated after Match "
             f"{latest_match}"
         )
 
@@ -595,6 +596,8 @@ def main():
 
     print("🔥 BOT STARTING")
 
+    asyncio.get_event_loop().set_debug(False)
+
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(
@@ -640,6 +643,10 @@ def main():
 
     app.run_polling(
         drop_pending_updates=True,
+        allowed_updates=None,
+        close_loop=False,
+        stop_signals=None,
+        bootstrap_retries=-1,
         poll_interval=2,
         timeout=30,
         read_timeout=30,
