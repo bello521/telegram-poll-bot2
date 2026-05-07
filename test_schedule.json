@@ -4,16 +4,7 @@
         "team1": "SRH",
         "team2": "PBKS",
         "type": "normal",
-        "create_time": "2026-05-07 17:20",
-        "close_time": "2026-05-07 17:21"
-    },
-
-    {
-        "match_no": "50",
-        "team1": "RCB",
-        "team2": "MI",
-        "type": "normal",
-        "create_time": "2026-05-07 17:23",
-        "close_time": "2026-05-07 17:24"
+        "create_time": "2026-05-07 17:52",
+        "close_time": "2026-05-07 17:53"
     }
  ]
