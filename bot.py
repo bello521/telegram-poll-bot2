@@ -1,6 +1,5 @@
 import os
 import json
-import asyncio
 import traceback
 
 from datetime import datetime
@@ -12,8 +11,7 @@ from telegram import InputFile
 from telegram.ext import (
     Application,
     CommandHandler,
-    PollAnswerHandler,
-    ContextTypes
+    PollAnswerHandler
 )
 
 # ================== CONFIG ==================
@@ -31,7 +29,7 @@ ADMIN_IDS = list(
     )
 )
 
-DATA_FILE = "test_data.json"
+DATA_FILE = "data.json"
 
 # ================== DATA ==================
 
@@ -64,9 +62,9 @@ def save_data(data):
 
 def load_schedule():
 
-    print("📂 Loading test_schedule.json")
+    print("📂 Loading schedule.json")
 
-    with open("test_schedule.json", "r") as f:
+    with open("schedule.json", "r") as f:
 
         raw = json.load(f)
 
@@ -162,7 +160,7 @@ async def create_poll_auto(context, match):
             chat_id=GROUP_ID,
 
             question=(
-                f"{match_no}\n"
+                f"{match_no}. "
                 f"{match['team1']} vs {match['team2']}"
             ),
 
@@ -246,6 +244,8 @@ async def close_poll_auto(context, match):
 async def scheduler(context):
 
     try:
+
+        print("🔁 Scheduler running")
 
         for match in MATCH_SCHEDULE:
 
@@ -428,7 +428,25 @@ async def send_leaderboard(context):
 
         )
 
-        text = "🏆 <b>Leaderboard</b>\n\n"
+        updated_matches = [
+
+            int(m)
+            for m, p in data["polls"].items()
+            if p["updated"]
+
+        ]
+
+        latest_match = "0"
+
+        if updated_matches:
+
+            latest_match = str(
+                max(updated_matches)
+            )
+
+        text = (
+            "🏆 <b>IPL Prediction Leaderboard</b>\n\n"
+        )
 
         for i, (uid, user) in enumerate(users, 1):
 
@@ -450,9 +468,14 @@ async def send_leaderboard(context):
                 prefix = f"{i}."
 
             text += (
-                f"{prefix} {tag} — "
-                f"<b>{user['points']}</b> pts\n"
+                f"{prefix} {tag}\n"
+                f"└ <b>{user['points']}</b> pts\n\n"
             )
+
+        text += (
+            f"📌 Updated after Match "
+            f"{latest_match}"
+        )
 
         await context.bot.send_message(
 
@@ -508,7 +531,7 @@ async def backup(update, context):
 
                 document=InputFile(f),
 
-                filename="backup.json"
+                filename="data_backup.json"
 
             )
 
@@ -542,10 +565,17 @@ def run_web():
         def do_GET(self):
 
             self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Bot running")
 
+        def do_HEAD(self):
+
+            self.send_response(200)
             self.end_headers()
 
-            self.wfile.write(b"Bot running")
+        def log_message(self, format, *args):
+
+            return
 
     port = int(
         os.environ.get("PORT", 10000)
@@ -609,7 +639,13 @@ def main():
     print("🚀 BOT STARTED")
 
     app.run_polling(
-        drop_pending_updates=True
+        drop_pending_updates=True,
+        poll_interval=2,
+        timeout=30,
+        read_timeout=30,
+        write_timeout=30,
+        connect_timeout=30,
+        pool_timeout=30
     )
 
 
