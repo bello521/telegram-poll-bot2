@@ -5,7 +5,7 @@ import asyncio
 
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from flask import Flask
 from threading import Thread
 
 from telegram import InputFile
@@ -559,35 +559,12 @@ async def error_handler(update, context):
 
 # ================== WEB SERVER ==================
 
-def run_web():
+flask_app = Flask(__name__)
 
-    class Handler(BaseHTTPRequestHandler):
+@flask_app.route("/")
+def home():
 
-        def do_GET(self):
-
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(b"Bot running")
-
-        def do_HEAD(self):
-
-            self.send_response(200)
-            self.end_headers()
-
-        def log_message(self, format, *args):
-
-            return
-
-    port = int(
-        os.environ.get("PORT", 10000)
-    )
-
-    print(f"🌐 WEB RUNNING ON {port}")
-
-    HTTPServer(
-        ("0.0.0.0", port),
-        Handler
-    ).serve_forever()
+    return "Bot running"
 
 
 # ================== MAIN ==================
@@ -643,10 +620,13 @@ def main():
     )
 
     Thread(
-        target=run_web,
+         target=lambda: flask_app.run(
+            host="0.0.0.0",
+            port=int(os.environ.get("PORT", 10000))
+        ),
         daemon=True
     ).start()
-
+    
     print("🚀 BOT STARTED")
 
     print("🚀 STARTING POLLING")
